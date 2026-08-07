@@ -1,0 +1,79 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "2": {
+    "inputs": {
+      "supir_model": "SUPIR-v0F.ckpt",
+      "fp8_unet": true
+    },
+    "class_type": "SUPIR_model_loader"
+  },
+  "3": {
+    "inputs": {
+      "image": "placeholder.png"
+    },
+    "class_type": "LoadImage"
+  },
+  "4": {
+    "inputs": {
+      "text": "high quality, detailed photo, sharp textures, clean skin, natural lighting",
+      "clip": ["1", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "5": {
+    "inputs": {
+      "text": "bad quality, blurry, pixelated, noise, artifacts, distorted faces",
+      "clip": ["1", 1]
+    },
+    "class_type": "CLIPTextEncode"
+  },
+  "6": {
+    "inputs": {
+      "use_tiled": false,
+      "tile_size": 2048,
+      "tile_stride": 1024,
+      "encoder": ["2", 0],
+      "image": ["3", 0]
+    },
+    "class_type": "SUPIR_first_stage_encode"
+  },
+  "7": {
+    "inputs": {
+      "seed": 123456789,
+      "steps": 12,
+      "cfg_scale": 4.0,
+      "min_cfg_scale": 1.0,
+      "s_churn": 0.0,
+      "s_noise": 1.003,
+      "s_cfg": 1.0,
+      "restoration_scale": 1.0,
+      "model": ["2", 0],
+      "latents": ["6", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0]
+    },
+    "class_type": "SUPIR_sample"
+  },
+  "8": {
+    "inputs": {
+      "use_tiled": false,
+      "tile_size": 2048,
+      "tile_stride": 1024,
+      "decoder": ["2", 0],
+      "samples": ["7", 0]
+    },
+    "class_type": "SUPIR_decode"
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "supir_restored_",
+      "images": ["8", 0]
+    },
+    "class_type": "SaveImage"
+  }
+}
