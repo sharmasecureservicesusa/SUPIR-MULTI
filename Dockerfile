@@ -8,13 +8,13 @@ ENV PIPX_HOME=/opt/pipx
 ENV PIPX_BIN_DIR=/usr/local/bin
 ENV PYTHONUNBUFFERED=1
 
-# 1. Install system utilities and aria2c for accelerated multi-connection downloads
+# 1. Install system utilities and aria2 for accelerated multi-connection downloads
 RUN apt-get update && apt-get install -y \
     s3fs \
     dos2unix \
     wget \
     git \
-    aria2c \
+    aria2 \
     python3 \
     python3-pip \
     pipx \
@@ -46,7 +46,7 @@ RUN mkdir -p /opt/ComfyUI/models/checkpoints \
              /opt/ComfyUI/models/clip \
              /opt/ComfyUI/models/vae
 
-# 6. Copy application scripts after heavy system dependency layers
+# 6. Copy application scripts
 COPY . /app
 
 RUN dos2unix /app/entrypoint.sh /app/download_models.sh 2>/dev/null || true && \
