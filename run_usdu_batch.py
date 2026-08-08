@@ -4,6 +4,7 @@ import glob
 import json
 import time
 import uuid
+import signal
 import shutil
 import subprocess
 import urllib.request
@@ -13,90 +14,83 @@ COMFYUI_DIR = os.getenv("COMFYUI_DIR", "/opt/ComfyUI")
 if not os.path.exists(COMFYUI_DIR) and os.path.exists("/workspace/ComfyUI"):
     COMFYUI_DIR = "/workspace/ComfyUI"
 
-SERVER_ADDRESS = "127.0.0.1:8188"
-INPUT_DIR = "/mnt/s3bucket/input"
-OUTPUT_DIR = "/mnt/s3bucket/output"
+S3_INPUT_DIR = "/mnt/s3bucket/input"
+S3_OUTPUT_DIR = "/mnt/s3bucket/output"
+RAM_INPUT_DIR = "/dev/shm/batch_input"
+RAM_OUTPUT_DIR = "/dev/shm/batch_output"
 WORKFLOW_FILE = "/app/workflow_api.json"
-COMFY_LOG_FILE = "/tmp/comfyui.log"
-TEMP_LOCAL_DIR = "/tmp/batch_processing"
 
-try:
-    upscale_factor = float(os.getenv("UPSCALE_FACTOR", "3.0"))
-except ValueError:
-    upscale_factor = 3.0
+# Define 4 Workers: 2 processes on GPU 0, 2 processes on GPU 1
+WORKERS = [
+    {"gpu_id": 0, "port": 8188},
+    {"gpu_id": 0, "port": 8189},
+    {"gpu_id": 1, "port": 8190},
+    {"gpu_id": 1, "port": 8191},
+]
+
+shutdown_requested = False
+
+def handle_sigterm(signum, frame):
+    global shutdown_requested
+    print("\n⚠️ Preemptible signal (SIGTERM) received! Flushing outputs and shutting down cleanly...")
+    shutdown_requested = True
+
+signal.signal(signal.SIGTERM, handle_sigterm)
+signal.signal(signal.SIGINT, handle_sigterm)
 
 def find_python_executable():
     candidates = [
-        "/opt/environments/python/comfyui/bin/python",
         "/opt/environments/python/comfyui/bin/python3",
-        "/opt/micromamba/envs/comfyui/bin/python",
+        "/opt/environments/python/comfyui/bin/python",
         "/workspace/ComfyUI/venv/bin/python",
         "/opt/ComfyUI/venv/bin/python",
     ]
     for path in candidates:
         if os.path.exists(path):
-            res = subprocess.run([path, "-c", "import torch"], capture_output=True)
-            if res.returncode == 0:
-                return path
-    for pattern in ["/opt/**/bin/python*", "/workspace/**/bin/python*"]:
-        for path in glob.glob(pattern, recursive=True):
-            if os.path.isfile(path) and os.access(path, os.X_OK) and not path.endswith("-config"):
-                res = subprocess.run([path, "-c", "import torch"], capture_output=True)
-                if res.returncode == 0:
-                    return path
+            return path
     return sys.executable
 
-def find_comfyui_dir():
-    candidates = [os.getenv("COMFYUI_DIR", ""), "/workspace/ComfyUI", "/opt/ComfyUI", "/app/ComfyUI"]
-    for path in candidates:
-        if path and os.path.exists(os.path.join(path, "main.py")):
-            return path
-    return "/opt/ComfyUI"
+def start_worker(gpu_id, port):
+    python_bin = find_python_executable()
+    main_py = os.path.join(COMFYUI_DIR, "main.py")
+    log_file = f"/tmp/comfyui_gpu{gpu_id}_port{port}.log"
+    
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
-def ensure_comfyui_running():
-    try:
-        urllib.request.urlopen(f"http://{SERVER_ADDRESS}/system_stats", timeout=2)
-        print("✓ ComfyUI server is active.")
-        return None
-    except Exception:
-        print("Launching local ComfyUI instance with High-VRAM + SDPA optimizations...")
-        python_bin = find_python_executable()
-        comfy_dir = find_comfyui_dir()
-        main_py = os.path.join(comfy_dir, "main.py")
-        
-        log_handle = open(COMFY_LOG_FILE, "w")
-        proc = subprocess.Popen(
-            [
-                python_bin, main_py,
-                "--listen", "127.0.0.1",
-                "--port", "8188",
-                "--highvram",
-                "--fp16-vae",
-                "--use-pytorch-cross-attention",
-                "--disable-auto-launch"
-            ],
-            stdout=log_handle,
-            stderr=subprocess.STDOUT
-        )
+    log_handle = open(log_file, "w")
+    proc = subprocess.Popen(
+        [
+            python_bin, main_py,
+            "--listen", "127.0.0.1",
+            "--port", str(port),
+            "--highvram",
+            "--fp16-vae",
+            "--use-pytorch-cross-attention",
+            "--disable-auto-launch"
+        ],
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        env=env
+    )
 
-        for _ in range(60):
-            if proc.poll() is not None:
-                print("❌ ComfyUI process exited prematurely.")
-                os.system(f"cat {COMFY_LOG_FILE}")
-                sys.exit(1)
-            try:
-                urllib.request.urlopen(f"http://{SERVER_ADDRESS}/system_stats", timeout=2)
-                print("✓ ComfyUI server initialized successfully!")
-                return proc
-            except Exception:
-                time.sleep(1)
-        sys.exit(1)
+    for _ in range(60):
+        if proc.poll() is not None:
+            print(f"❌ ComfyUI worker on GPU {gpu_id}:{port} failed.")
+            sys.exit(1)
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/system_stats", timeout=2)
+            print(f"✓ Active Worker -> GPU {gpu_id} | Port {port}")
+            return proc
+        except Exception:
+            time.sleep(1)
+    sys.exit(1)
 
-def queue_prompt(prompt_workflow):
+def queue_prompt(port, prompt_workflow):
     client_id = str(uuid.uuid4())
     payload = json.dumps({"prompt": prompt_workflow, "client_id": client_id}).encode("utf-8")
     req = urllib.request.Request(
-        f"http://{SERVER_ADDRESS}/prompt",
+        f"http://127.0.0.1:{port}/prompt",
         data=payload,
         headers={"Content-Type": "application/json"}
     )
@@ -104,31 +98,39 @@ def queue_prompt(prompt_workflow):
         res_data = json.loads(response.read().decode("utf-8"))
         return res_data["prompt_id"]
 
-def wait_for_completion(prompt_id):
+def wait_for_completion(port, prompt_id):
     while True:
         try:
-            with urllib.request.urlopen(f"http://{SERVER_ADDRESS}/history/{prompt_id}") as resp:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/history/{prompt_id}") as resp:
                 history = json.loads(resp.read().decode("utf-8"))
                 if prompt_id in history:
                     return history[prompt_id]
         except Exception:
             pass
-        time.sleep(0.1)
+        time.sleep(0.05)
 
-def process_single_image(img_name, base_workflow, load_image_node, comfy_input_dir):
-    src_input_path = os.path.join(INPUT_DIR, img_name)
-    target_output_path = os.path.join(OUTPUT_DIR, f"upscaled_{img_name}")
+def process_single_image(img_name, base_workflow, load_image_node, comfy_input_dir, task_index):
+    if shutdown_requested:
+        return
+
+    worker = WORKERS[task_index % len(WORKERS)]
+    port = worker["port"]
+    
+    ram_src_path = os.path.join(RAM_INPUT_DIR, img_name)
+    ram_dest_path = os.path.join(RAM_OUTPUT_DIR, f"upscaled_{img_name}")
+    s3_dest_path = os.path.join(S3_OUTPUT_DIR, f"upscaled_{img_name}")
+    s3_src_path = os.path.join(S3_INPUT_DIR, img_name)
     comfy_temp_input = os.path.join(comfy_input_dir, img_name)
 
     try:
-        shutil.copy(src_input_path, comfy_temp_input)
+        shutil.copy(ram_src_path, comfy_temp_input)
 
         current_workflow = json.loads(json.dumps(base_workflow))
         if load_image_node:
             current_workflow[load_image_node]["inputs"]["image"] = img_name
 
-        prompt_id = queue_prompt(current_workflow)
-        history = wait_for_completion(prompt_id)
+        prompt_id = queue_prompt(port, current_workflow)
+        history = wait_for_completion(port, prompt_id)
         outputs = history.get("outputs", {})
         generated_full_path = None
 
@@ -139,30 +141,38 @@ def process_single_image(img_name, base_workflow, load_image_node, comfy_input_d
                 break
 
         if generated_full_path and os.path.exists(generated_full_path):
-            shutil.move(generated_full_path, target_output_path)
+            # Move result to RAM disk first
+            shutil.move(generated_full_path, ram_dest_path)
+            # Sync RAM disk output to S3 mount
+            shutil.copy(ram_dest_path, s3_dest_path)
+            
+            # Clean up local temporary files
             if os.path.exists(comfy_temp_input):
                 os.remove(comfy_temp_input)
-            if os.path.exists(src_input_path):
-                os.remove(src_input_path)
-            print(f"✓ Successfully processed: {img_name}")
-        else:
-            print(f"⚠️ Output missing for {img_name}")
+            if os.path.exists(s3_src_path):
+                os.remove(s3_src_path)
+            print(f"✓ Processed {img_name} on GPU {worker['gpu_id']} (Port {port})")
 
     except Exception as e:
         print(f"❌ Error processing {img_name}: {str(e)}")
 
 def main():
-    os.makedirs(INPUT_DIR, exist_ok=True)
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    os.makedirs(TEMP_LOCAL_DIR, exist_ok=True)
+    os.makedirs(S3_INPUT_DIR, exist_ok=True)
+    os.makedirs(S3_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(RAM_INPUT_DIR, exist_ok=True)
+    os.makedirs(RAM_OUTPUT_DIR, exist_ok=True)
 
-    image_files = [f for f in os.listdir(INPUT_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
-    if not image_files:
-        print(f"No images found in {INPUT_DIR}. Exiting.")
+    s3_files = [f for f in os.listdir(S3_INPUT_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
+    if not s3_files:
+        print("No input images found. Exiting.")
         sys.exit(0)
 
-    print(f"Found {len(image_files)} images to process.")
-    server_proc = ensure_comfyui_running()
+    print(f"Syncing {len(s3_files)} images to 384GB System RAM disk (`/dev/shm`).")
+    for f in s3_files:
+        shutil.copy(os.path.join(S3_INPUT_DIR, f), os.path.join(RAM_INPUT_DIR, f))
+
+    print(f"Initializing 4x ComfyUI workers across 2x L40S GPUs...")
+    processes = [start_worker(w["gpu_id"], w["port"]) for w in WORKERS]
 
     with open(WORKFLOW_FILE, "r") as f:
         base_workflow = json.load(f)
@@ -178,20 +188,25 @@ def main():
 
     start_time = time.time()
 
-    # Parallelize file preparation and queue submissions
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    # Utilize 16 CPU worker threads to maximize 64 vCPU scheduling
+    with ThreadPoolExecutor(max_workers=16) as executor:
         futures = [
-            executor.submit(process_single_image, img_name, base_workflow, load_image_node, comfy_input_dir)
-            for img_name in image_files
+            executor.submit(process_single_image, img_name, base_workflow, load_image_node, comfy_input_dir, idx)
+            for idx, img_name in enumerate(s3_files)
         ]
         for future in futures:
             future.result()
 
     elapsed = time.time() - start_time
-    print(f"\n=== Completed {len(image_files)} images in {elapsed:.2f}s ({len(image_files)/elapsed:.2f} img/sec) ===")
+    rate = len(s3_files) / elapsed if elapsed > 0 else 0
+    print(f"\n=== Completed {len(s3_files)} images in {elapsed:.2f}s ({rate:.2f} img/sec | {rate*60:.2f} img/min) ===")
 
-    if server_proc:
-        server_proc.terminate()
+    for proc in processes:
+        proc.terminate()
+
+    # Cleanup RAM disk
+    shutil.rmtree(RAM_INPUT_DIR, ignore_errors=True)
+    shutil.rmtree(RAM_OUTPUT_DIR, ignore_errors=True)
 
 if __name__ == "__main__":
     main()

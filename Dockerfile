@@ -49,7 +49,8 @@ RUN mkdir -p /opt/ComfyUI/models/checkpoints \
 # 6. Copy application scripts
 COPY . /app
 
-RUN dos2unix /app/entrypoint.sh /app/download_models.sh 2>/dev/null || true && \
-    chmod +x /app/entrypoint.sh /app/download_models.sh 2>/dev/null || true
+# Normalize line endings and permissions for all scripts and python files
+RUN dos2unix /app/*.sh /app/*.py 2>/dev/null || true && \
+    chmod +x /app/*.sh 2>/dev/null || true
 
 ENTRYPOINT ["/app/entrypoint.sh"]

@@ -5,39 +5,38 @@ import json
 import time
 import uuid
 import shutil
+import asyncio
+import itertools
 import subprocess
 import urllib.request
-import urllib.parse
-import urllib.error
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
-SERVER_ADDRESS = "127.0.0.1:8188"
 WORKFLOW_FILE = "/app/workflow_api.json"
-COMFY_LOG_FILE = "/tmp/comfyui.log"
 
-app = FastAPI(title="ComfyUI Max Quality Upscaler Endpoint")
-comfy_process = None
+# Launch 4 Workers: 2 per GPU to fully utilize dual L40S Tensor Cores
+WORKERS = [
+    {"gpu_id": 0, "port": 8188},
+    {"gpu_id": 0, "port": 8189},
+    {"gpu_id": 1, "port": 8190},
+    {"gpu_id": 1, "port": 8191},
+]
+
+worker_processes = []
+worker_ports = [w["port"] for w in WORKERS]
+port_cycle = itertools.cycle(worker_ports)
 
 def find_python_executable():
     candidates = [
-        "/opt/environments/python/comfyui/bin/python",
         "/opt/environments/python/comfyui/bin/python3",
-        "/opt/micromamba/envs/comfyui/bin/python",
+        "/opt/environments/python/comfyui/bin/python",
         "/workspace/ComfyUI/venv/bin/python",
         "/opt/ComfyUI/venv/bin/python",
     ]
     for path in candidates:
         if os.path.exists(path):
-            res = subprocess.run([path, "-c", "import torch"], capture_output=True)
-            if res.returncode == 0:
-                return path
-    for pattern in ["/opt/**/bin/python*", "/workspace/**/bin/python*"]:
-        for path in glob.glob(pattern, recursive=True):
-            if os.path.isfile(path) and os.access(path, os.X_OK) and not path.endswith("-config"):
-                res = subprocess.run([path, "-c", "import torch"], capture_output=True)
-                if res.returncode == 0:
-                    return path
+            return path
     return sys.executable
 
 def find_comfyui_dir():
@@ -47,83 +46,90 @@ def find_comfyui_dir():
             return path
     return "/opt/ComfyUI"
 
-def ensure_comfyui_running():
-    try:
-        urllib.request.urlopen(f"http://{SERVER_ADDRESS}/system_stats", timeout=2)
-        print("✓ ComfyUI server is active.")
-        return None
-    except Exception:
-        print("Launching local ComfyUI instance (--highvram, --fp16-vae, SDPA)...")
-        python_bin = find_python_executable()
-        comfy_dir = find_comfyui_dir()
-        main_py = os.path.join(comfy_dir, "main.py")
-        
-        log_handle = open(COMFY_LOG_FILE, "w")
-        proc = subprocess.Popen(
-            [
-                python_bin, main_py,
-                "--listen", "127.0.0.1",
-                "--port", "8188",
-                "--highvram",
-                "--fp16-vae",
-                "--use-pytorch-cross-attention",
-                "--disable-auto-launch"
-            ],
-            stdout=log_handle,
-            stderr=subprocess.STDOUT
-        )
+def start_comfy_worker(gpu_id, port):
+    python_bin = find_python_executable()
+    comfy_dir = find_comfyui_dir()
+    main_py = os.path.join(comfy_dir, "main.py")
+    log_file = f"/tmp/comfyui_gpu{gpu_id}_port{port}.log"
+    
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
-        for _ in range(60):
-            if proc.poll() is not None:
-                print("❌ ComfyUI process exited prematurely.")
-                os.system(f"cat {COMFY_LOG_FILE}")
-                sys.exit(1)
-            try:
-                urllib.request.urlopen(f"http://{SERVER_ADDRESS}/system_stats", timeout=2)
-                print("✓ ComfyUI server initialized successfully!")
-                return proc
-            except Exception:
-                time.sleep(1)
-        sys.exit(1)
+    log_handle = open(log_file, "w")
+    proc = subprocess.Popen(
+        [
+            python_bin, main_py,
+            "--listen", "127.0.0.1",
+            "--port", str(port),
+            "--highvram",
+            "--fp16-vae",
+            "--use-pytorch-cross-attention",
+            "--disable-auto-launch"
+        ],
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        env=env
+    )
 
-def queue_prompt(prompt_workflow):
+    for _ in range(60):
+        if proc.poll() is not None:
+            print(f"❌ ComfyUI worker failed on GPU {gpu_id} (Port {port})")
+            sys.exit(1)
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/system_stats", timeout=2)
+            print(f"✓ ComfyUI active on GPU {gpu_id} (Port {port})")
+            return proc
+        except Exception:
+            time.sleep(1)
+    sys.exit(1)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global worker_processes
+    print("🚀 Initializing Multi-GPU ComfyUI Worker Pool...")
+    for worker in WORKERS:
+        proc = start_comfy_worker(worker["gpu_id"], worker["port"])
+        worker_processes.append(proc)
+    yield
+    print("Terminating ComfyUI worker processes...")
+    for proc in worker_processes:
+        proc.terminate()
+
+app = FastAPI(title="ComfyUI Dual-L40S Max Speed Endpoint", lifespan=lifespan)
+
+def queue_prompt(port, prompt_workflow):
     client_id = str(uuid.uuid4())
     payload = json.dumps({"prompt": prompt_workflow, "client_id": client_id}).encode("utf-8")
-    req = urllib.request.Request(f"http://{SERVER_ADDRESS}/prompt", data=payload, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/prompt", data=payload, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req) as response:
         res_data = json.loads(response.read().decode("utf-8"))
         return res_data["prompt_id"]
 
-def wait_for_completion(prompt_id):
+async def wait_for_completion(port, prompt_id):
     while True:
         try:
-            with urllib.request.urlopen(f"http://{SERVER_ADDRESS}/history/{prompt_id}") as resp:
+            req_url = f"http://127.0.0.1:{port}/history/{prompt_id}"
+            with urllib.request.urlopen(req_url) as resp:
                 history = json.loads(resp.read().decode("utf-8"))
                 if prompt_id in history:
                     return history[prompt_id]
         except Exception:
             pass
-        time.sleep(0.1)
+        await asyncio.sleep(0.05)
 
-@app.on_event("startup")
-def startup_event():
-    global comfy_process
-    print("🚀 Starting ComfyUI backend service...")
-    comfy_process = ensure_comfyui_running()
-
-@app.on_event("shutdown")
-def shutdown_event():
-    global comfy_process
-    if comfy_process:
-        print("Terminating ComfyUI server process...")
-        comfy_process.terminate()
+def cleanup_file(filepath: str):
+    if os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass
 
 @app.get("/health")
 def health():
-    return {"status": "ready"}
+    return {"status": "ready", "active_workers": len(worker_processes)}
 
 @app.post("/v1/upscale")
-async def upscale(file: UploadFile = File(...)):
+async def upscale(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     comfy_dir = find_comfyui_dir()
     comfy_input_dir = os.path.join(comfy_dir, "input")
     os.makedirs(comfy_input_dir, exist_ok=True)
@@ -134,6 +140,9 @@ async def upscale(file: UploadFile = File(...)):
     with open(temp_input_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
+    # Select next worker port via round-robin
+    assigned_port = next(port_cycle)
+
     try:
         with open(WORKFLOW_FILE, "r") as f:
             workflow = json.load(f)
@@ -142,8 +151,8 @@ async def upscale(file: UploadFile = File(...)):
             if node.get("class_type") == "LoadImage":
                 workflow[node_id]["inputs"]["image"] = filename
 
-        prompt_id = queue_prompt(workflow)
-        history = wait_for_completion(prompt_id)
+        prompt_id = queue_prompt(assigned_port, workflow)
+        history = await wait_for_completion(assigned_port, prompt_id)
 
         outputs = history.get("outputs", {})
         generated_path = None
@@ -155,10 +164,14 @@ async def upscale(file: UploadFile = File(...)):
                 break
 
         if generated_path and os.path.exists(generated_path):
+            # Schedule file cleanup after response is sent
+            background_tasks.add_task(cleanup_file, generated_path)
+            background_tasks.add_task(cleanup_file, temp_input_path)
+            
             return FileResponse(generated_path, media_type="image/png", filename=f"upscaled_{file.filename}")
         else:
             raise HTTPException(status_code=500, detail="Upscaling failed to generate output image.")
 
-    finally:
-        if os.path.exists(temp_input_path):
-            os.remove(temp_input_path)
+    except Exception as e:
+        cleanup_file(temp_input_path)
+        raise HTTPException(status_code=500, detail=str(e))

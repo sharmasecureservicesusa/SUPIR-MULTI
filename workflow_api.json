@@ -32,13 +32,21 @@
     },
     "class_type": "CLIPTextEncode"
   },
+  "10": {
+    "inputs": {
+      "upscale_method": "bicubic",
+      "scale_by": 3.0,
+      "image": ["3", 0]
+    },
+    "class_type": "ImageScaleBy"
+  },
   "6": {
     "inputs": {
       "use_tiled": false,
       "tile_size": 2048,
       "tile_stride": 1024,
       "encoder": ["2", 0],
-      "image": ["3", 0]
+      "image": ["10", 0]
     },
     "class_type": "SUPIR_first_stage_encode"
   },
