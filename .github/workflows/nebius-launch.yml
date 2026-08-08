@@ -16,10 +16,8 @@ on:
         required: true
         default: 'latest'
         type: string
-        
+
 env:
-  NEBIUS_PROJECT_ID: ${{ secrets.NEBIUS_PROJECT_ID }}
-  NEBIUS_PARENT_ID: ${{ secrets.NEBIUS_PARENT_ID }}
   IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
@@ -34,7 +32,8 @@ jobs:
       - name: Install Nebius CLI
         run: |
           curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
-          echo "$HOME/nebius/bin" >> $GITHUB_PATH
+          echo "$HOME/.nebius/bin" >> $GITHUB_PATH
+          sudo ln -sf "$HOME/.nebius/bin/nebius" /usr/local/bin/nebius || true
 
       - name: Authenticate with Nebius Cloud
         run: |
@@ -81,7 +80,7 @@ jobs:
               ${ENV_IMAGE}:${ENV_TAG}
           EOF
 
-          # Inject runtime variables safely into cloud-init template
+          # Inject runtime variables into cloud-init template
           sed -i "s|\${ENV_IMAGE}|${IMAGE_NAME}|g" cloud-init.yaml
           sed -i "s|\${ENV_TAG}|${{ github.event.inputs.image_tag }}|g" cloud-init.yaml
           sed -i "s|\${ENV_MODE}|${{ github.event.inputs.mode }}|g" cloud-init.yaml
@@ -94,7 +93,7 @@ jobs:
         run: |
           VM_NAME="supir-worker-$(date +%s)"
           
-          echo "Deploying VM '$VM_NAME' with Platform: gpu-l40s-d | Preset: 2gpu-64vcpu-384gb..."
+          echo "Deploying VM '$VM_NAME' on Platform: gpu-l40s-d | Preset: 2gpu-64vcpu-384gb..."
           
           nebius compute instance create \
             --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
@@ -113,7 +112,7 @@ jobs:
           echo "VM_ID=$VM_ID" >> $GITHUB_OUTPUT
           echo "Successfully initialized VM ID: $VM_ID"
 
-      - name: Fetch Instance Details & IP
+      - name: Fetch Instance Details
         run: |
           sleep 15
           nebius compute instance get --id "${{ steps.deploy.outputs.VM_ID }}"
