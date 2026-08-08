@@ -38,10 +38,12 @@ jobs:
 
       - name: Authenticate with Nebius Cloud
         run: |
+          mkdir -p ~/.nebius
+          echo '${{ secrets.NEBIUS_SA_CREDENTIALS }}' > ~/.nebius/credentials.json
           nebius profile create \
             --name default \
             --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
-            --iam-token "${{ secrets.NEBIUS_IAM_TOKEN }}" \
+            --service-account-file ~/.nebius/credentials.json \
             --non-interactive
 
       - name: Generate Cloud-Init Config
