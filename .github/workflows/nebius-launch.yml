@@ -1,0 +1,117 @@
+name: Launch Nebius Preemptible GPU Instance
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Execution Mode'
+        required: true
+        default: 'batch'
+        type: choice
+        options:
+          - batch
+          - endpoint
+      image_tag:
+        description: 'Docker Image Tag to Run'
+        required: true
+        default: 'latest'
+        type: string
+        
+env:
+  NEBIUS_PROJECT_ID: ${{ secrets.NEBIUS_PROJECT_ID }}
+  NEBIUS_PARENT_ID: ${{ secrets.NEBIUS_PARENT_ID }}
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  launch-instance:
+    name: Provision Dual-L40S Instance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Nebius CLI
+        run: |
+          curl -sSL https://storage.eu-north1.nebius.cloud/cli/install.sh | bash
+          echo "$HOME/nebius/bin" >> $GITHUB_PATH
+
+      - name: Authenticate with Nebius Cloud
+        run: |
+          nebius profile create \
+            --name default \
+            --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
+            --iam-token "${{ secrets.NEBIUS_IAM_TOKEN }}" \
+            --non-interactive
+
+      - name: Generate Cloud-Init Config
+        run: |
+          cat << 'EOF' > cloud-init.yaml
+          #cloud-config
+          package_update: true
+          packages:
+            - docker.io
+            - nvidia-container-toolkit
+
+          runcmd:
+            # Configure Docker GPU Runtime
+            - nvidia-ctk runtime configure --runtime=docker
+            - systemctl restart docker
+            
+            # Authenticate with GHCR
+            - echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+            # Create RAM Disk Mount point for zero-latency I/O Staging
+            - mkdir -p /dev/shm
+            - mount -o remount,size=128g /dev/shm
+
+            # Pull and execute the optimized image
+            - docker pull ${ENV_IMAGE}:${ENV_TAG}
+            - >-
+              docker run -d --rm
+              --gpus all
+              --shm-size=128g
+              --net=host
+              -e MODE="${ENV_MODE}"
+              -e S3_ACCESS_KEY="${ENV_S3_ACCESS_KEY}"
+              -e S3_SECRET_KEY="${ENV_S3_SECRET_KEY}"
+              -e S3_BUCKET_NAME="${ENV_S3_BUCKET_NAME}"
+              ${ENV_IMAGE}:${ENV_TAG}
+          EOF
+
+          # Inject runtime variables safely into cloud-init template
+          sed -i "s|\${ENV_IMAGE}|${IMAGE_NAME}|g" cloud-init.yaml
+          sed -i "s|\${ENV_TAG}|${{ github.event.inputs.image_tag }}|g" cloud-init.yaml
+          sed -i "s|\${ENV_MODE}|${{ github.event.inputs.mode }}|g" cloud-init.yaml
+          sed -i "s|\${ENV_S3_ACCESS_KEY}|${{ secrets.S3_ACCESS_KEY }}|g" cloud-init.yaml
+          sed -i "s|\${ENV_S3_SECRET_KEY}|${{ secrets.S3_SECRET_KEY }}|g" cloud-init.yaml
+          sed -i "s|\${ENV_S3_BUCKET_NAME}|${{ secrets.S3_BUCKET_NAME }}|g" cloud-init.yaml
+
+      - name: Deploy Preemptible Instance on Nebius
+        id: deploy
+        run: |
+          VM_NAME="supir-worker-$(date +%s)"
+          
+          echo "Deploying VM '$VM_NAME' with Platform: gpu-l40s-d | Preset: 2gpu-64vcpu-384gb..."
+          
+          nebius compute instance create \
+            --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
+            --name "$VM_NAME" \
+            --resources-platform "gpu-l40s-d" \
+            --resources-preset "2gpu-64vcpu-384gb" \
+            --preemptible-priority "100" \
+            --boot-disk-attach-mode "read_write" \
+            --boot-disk-managed-disk-size-gibibytes 100 \
+            --boot-disk-managed-disk-type "network_ssd" \
+            --boot-disk-managed-disk-source-image-family-image-family "ubuntu24.04-cuda12" \
+            --cloud-init-user-data "$(cat cloud-init.yaml)" \
+            --format json > instance_output.json
+
+          VM_ID=$(jq -r '.metadata.id' instance_output.json)
+          echo "VM_ID=$VM_ID" >> $GITHUB_OUTPUT
+          echo "Successfully initialized VM ID: $VM_ID"
+
+      - name: Fetch Instance Details & IP
+        run: |
+          sleep 15
+          nebius compute instance get --id "${{ steps.deploy.outputs.VM_ID }}"
