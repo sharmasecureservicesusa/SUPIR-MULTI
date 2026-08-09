@@ -35,15 +35,15 @@ jobs:
           echo "$HOME/.nebius/bin" >> $GITHUB_PATH
           sudo ln -sf "$HOME/.nebius/bin/nebius" /usr/local/bin/nebius || true
 
-      - name: Authenticate with Nebius Cloud
+      - name: Authenticate Nebius Service Account
         run: |
           mkdir -p ~/.nebius
-          echo '${{ secrets.NEBIUS_SA_CREDENTIALS }}' > ~/.nebius/credentials.json
-          nebius profile create default \
+          echo '${{ secrets.NEBIUS_SA_CREDENTIALS }}' > ~/.nebius/sa-credentials.json
+          nebius profile create \
             --endpoint api.nebius.cloud \
-            --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
-            --service-account-file ~/.nebius/credentials.json
-
+            --service-account-file ~/.nebius/sa-credentials.json \
+            --profile sa-profile
+            
       - name: Generate Cloud-Init Config
         run: |
           cat << 'EOF' > cloud-init.yaml
