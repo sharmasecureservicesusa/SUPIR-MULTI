@@ -53,21 +53,23 @@ jobs:
             - nvidia-container-toolkit
 
           runcmd:
-            # Configure Docker GPU Runtime
+            # 1. Configure Docker GPU Runtime
             - nvidia-ctk runtime configure --runtime=docker
             - systemctl restart docker
             
-            # Authenticate with GHCR
+            # 2. Authenticate with GitHub Container Registry
             - echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-            # Create RAM Disk Mount point for zero-latency I/O Staging
+            # 3. Prepare Shared Memory RAM Disk (128GB)
             - mkdir -p /dev/shm
             - mount -o remount,size=128g /dev/shm
 
-            # Pull and execute the optimized image
+            # 4. Pull image
             - docker pull ${ENV_IMAGE}:${ENV_TAG}
+
+            # 5. Execute container in foreground mode (removed -d flag so cloud-init waits)
             - >-
-              docker run -d --rm
+              docker run --rm
               --gpus all
               --shm-size=128g
               --net=host
@@ -76,6 +78,9 @@ jobs:
               -e S3_SECRET_KEY="${ENV_S3_SECRET_KEY}"
               -e S3_BUCKET_NAME="${ENV_S3_BUCKET_NAME}"
               ${ENV_IMAGE}:${ENV_TAG}
+
+            # 6. Shut down and turn off the VM as soon as the container finishes
+            - poweroff
           EOF
 
           # Inject runtime variables into cloud-init template
