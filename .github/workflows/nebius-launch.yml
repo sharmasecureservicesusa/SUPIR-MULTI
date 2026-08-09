@@ -41,7 +41,8 @@ jobs:
           echo '${{ secrets.NEBIUS_SA_CREDENTIALS }}' > ~/.nebius/credentials.json
           nebius profile create default \
             --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
-            --service-account-file ~/.nebius/credentials.json
+            --service-account-file ~/.nebius/credentials.json \
+            --non-interactive
 
       - name: Generate Cloud-Init Config
         run: |
