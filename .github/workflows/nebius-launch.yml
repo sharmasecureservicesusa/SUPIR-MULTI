@@ -39,11 +39,9 @@ jobs:
         run: |
           mkdir -p ~/.nebius
           echo '${{ secrets.NEBIUS_SA_CREDENTIALS }}' > ~/.nebius/credentials.json
-          nebius profile create \
-            --name default \
+          nebius profile create default \
             --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
-            --service-account-file ~/.nebius/credentials.json \
-            --non-interactive
+            --service-account-file ~/.nebius/credentials.json
 
       - name: Generate Cloud-Init Config
         run: |
@@ -100,7 +98,8 @@ jobs:
             --name "$VM_NAME" \
             --resources-platform "gpu-l40s-d" \
             --resources-preset "2gpu-64vcpu-384gb" \
-            --preemptible-priority "100" \
+            --recovery-policy "fail" \
+            --preemptible-on-preemption "stop" \
             --boot-disk-attach-mode "read_write" \
             --boot-disk-managed-disk-size-gibibytes 100 \
             --boot-disk-managed-disk-type "network_ssd" \
