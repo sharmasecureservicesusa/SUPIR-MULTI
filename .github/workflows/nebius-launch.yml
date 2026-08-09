@@ -40,9 +40,9 @@ jobs:
           mkdir -p ~/.nebius
           echo '${{ secrets.NEBIUS_SA_CREDENTIALS }}' > ~/.nebius/credentials.json
           nebius profile create default \
+            --endpoint api.nebius.cloud \
             --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
-            --service-account-file ~/.nebius/credentials.json \
-            --non-interactive
+            --service-account-file ~/.nebius/credentials.json
 
       - name: Generate Cloud-Init Config
         run: |
