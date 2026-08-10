@@ -24,26 +24,45 @@ os.makedirs(RAM_OUTPUT_DIR, exist_ok=True)
 os.makedirs(OUTPUT_S3_DIR, exist_ok=True)
 
 def start_comfyui_worker(gpu_id, port):
+    log_file_path = f"/tmp/comfyui_gpu_{gpu_id}_port_{port}.log"
+    log_file = open(log_file_path, "w")
+    
     cmd = [
         PYTHON_BIN, os.path.join(COMFYUI_DIR, "main.py"),
         "--port", str(port),
+        "--listen", "127.0.0.1",
         "--dont-print-server"
     ]
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return proc
+    
+    proc = subprocess.Popen(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT)
+    return proc, log_file_path, log_file
 
-def wait_for_server(port, timeout=120):
+def wait_for_server(proc, log_file_path, port, timeout=120):
     start = time.time()
-    url = f"http://127.0.0.1:{port}/history"
+    url = f"http://127.0.0.1:{port}/system_stats"
+    
     while time.time() - start < timeout:
+        # Check if process exited/crashed prematurely
+        if proc.poll() is not None:
+            print(f"❌ ComfyUI process on port {port} crashed with exit code {proc.returncode}!")
+            if os.path.exists(log_file_path):
+                with open(log_file_path, "r") as f:
+                    print(f"=== Startup Log (Port {port}) ===\n{f.read()}")
+            return False
+
         try:
             with urllib.request.urlopen(url, timeout=2) as response:
                 if response.status == 200:
                     return True
         except Exception:
             time.sleep(2)
+
+    print(f"❌ Timeout waiting for ComfyUI worker on port {port}.")
+    if os.path.exists(log_file_path):
+        with open(log_file_path, "r") as f:
+            print(f"=== Startup Log (Port {port}) ===\n{f.read()}")
     return False
 
 def build_supir_workflow(input_filename, output_prefix):
@@ -160,22 +179,26 @@ def main():
     
     ports = []
     procs = []
+    log_files = []
     base_port = 8188
 
     for gpu_id in range(gpu_count):
         port = base_port + gpu_id
         print(f"Launching ComfyUI Worker on GPU {gpu_id} (Port {port})...")
-        proc = start_comfyui_worker(gpu_id, port)
+        proc, log_path, log_handle = start_comfyui_worker(gpu_id, port)
         procs.append(proc)
         ports.append(port)
+        log_files.append((log_path, log_handle))
 
-    for port in ports:
-        if not wait_for_server(port):
-            print(f"❌ Failed to initialize worker on port {port}")
+    for idx, port in enumerate(ports):
+        proc = procs[idx]
+        log_path = log_files[idx][0]
+        if not wait_for_server(proc, log_path, port):
+            print(f"❌ Aborting batch execution due to worker startup failure on port {port}.")
             for p in procs:
                 p.terminate()
             sys.exit(1)
-        print(f"✓ Active Worker -> Port {port}")
+        print(f"✓ Active Worker -> GPU {idx} | Port {port}")
 
     raw_images = glob.glob(os.path.join(INPUT_S3_DIR, "*.[jJ][pP][gG]")) + \
                  glob.glob(os.path.join(INPUT_S3_DIR, "*.[pP][nN][gG]")) + \
@@ -219,6 +242,8 @@ def main():
 
     for p in procs:
         p.terminate()
+    for _, handle in log_files:
+        handle.close()
 
 if __name__ == "__main__":
     main()
