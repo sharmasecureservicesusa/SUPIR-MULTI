@@ -82,7 +82,7 @@ def build_supir_workflow(input_filename, output_prefix):
                 "supir_model": "SUPIR-v0F.ckpt",
                 "sdxl_model": "sd_xl_base_1.0.safetensors",
                 "fp8_unet": True,
-                "diffusion_dtype": "fp8_e4m3fn"
+                "diffusion_dtype": "auto"
             },
             "class_type": "SUPIR_model_loader"
         },
@@ -91,28 +91,6 @@ def build_supir_workflow(input_filename, output_prefix):
                 "image": input_filename
             },
             "class_type": "LoadImage"
-        },
-        "4": {
-            "inputs": {
-                "text": "high quality, detailed photo, sharp textures, clean skin, natural lighting",
-                "clip": ["1", 1]
-            },
-            "class_type": "CLIPTextEncode"
-        },
-        "5": {
-            "inputs": {
-                "text": "bad quality, blurry, pixelated, noise, artifacts, distorted faces",
-                "clip": ["1", 1]
-            },
-            "class_type": "CLIPTextEncode"
-        },
-        "11": {
-            "inputs": {
-                "SUPIR_model": ["2", 0],
-                "positive": ["4", 0],
-                "negative": ["5", 0]
-            },
-            "class_type": "SUPIR_Conditioning"
         },
         "10": {
             "inputs": {
@@ -127,11 +105,20 @@ def build_supir_workflow(input_filename, output_prefix):
                 "SUPIR_VAE": ["2", 1],
                 "image": ["10", 0],
                 "use_tiled_vae": False,
-                "encoder_dtype": "bf16",
+                "encoder_dtype": "auto",
                 "encoder_tile_size": 2048,
                 "decoder_tile_size": 2048
             },
             "class_type": "SUPIR_first_stage"
+        },
+        "11": {
+            "inputs": {
+                "SUPIR_model": ["2", 0],
+                "latents": ["6", 2],
+                "positive_prompt": "high quality, detailed photo, sharp textures, clean skin, natural lighting",
+                "negative_prompt": "bad quality, blurry, pixelated, noise, artifacts, distorted faces"
+            },
+            "class_type": "SUPIR_conditioner"
         },
         "7": {
             "inputs": {
@@ -143,9 +130,9 @@ def build_supir_workflow(input_filename, output_prefix):
                 "control_scale_end": 1.0,
                 "restore_cfg": 1.0,
                 "keep_model_loaded": True,
-                "sampler": "DPMPP2M",
+                "sampler": "RestoreEDMSampler",
                 "DPMPP_eta": 1.0,
-                "EDM_s_churn": 0.0,
+                "EDM_s_churn": 0,
                 "s_noise": 1.003,
                 "SUPIR_model": ["2", 0],
                 "latents": ["6", 2],
