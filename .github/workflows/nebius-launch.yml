@@ -22,7 +22,7 @@ env:
 
 jobs:
   submit-serverless-job:
-    name: Submit Serverless Job (Dual-L40S)
+    name: Submit Serverless Job (NVIDIA RTX PRO 6000)
     runs-on: ubuntu-latest
 
     steps:
@@ -53,7 +53,7 @@ jobs:
 
           echo "Submitting Serverless AI Job '$JOB_NAME'..."
           echo "Image: $FULL_IMAGE"
-          echo "Platform: gpu-l40s-d | Preset: 2gpu-64vcpu-384gb"
+          echo "Platform: gpu-rtx6000 | Preset: 1gpu-24vcpu-218gb"
 
           nebius ai job create \
             --parent-id "$PARENT_ID" \
@@ -61,9 +61,10 @@ jobs:
             --image "$FULL_IMAGE" \
             --registry-username "${{ github.actor }}" \
             --registry-password "${{ secrets.GITHUB_TOKEN }}" \
-            --platform "gpu-l40s-d" \
-            --preset "2gpu-64vcpu-384gb" \
+            --platform "gpu-rtx6000" \
+            --preset "1gpu-24vcpu-218gb" \
             --env "MODE=${{ github.event.inputs.mode }}" \
+            --env "HF_TOKEN=${{ secrets.HF_TOKEN }}" \
             --env "S3_ACCESS_KEY=${{ secrets.S3_ACCESS_KEY }}" \
             --env "S3_SECRET_KEY=${{ secrets.S3_SECRET_KEY }}" \
             --env "S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}" \

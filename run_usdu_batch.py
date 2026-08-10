@@ -64,6 +64,7 @@ def build_supir_workflow(input_filename, output_prefix):
         "5": {
             "inputs": {
                 "supir_model": "SUPIR-v0F.ckpt",
+                "sdxl_model": "sd_xl_base_1.0.safetensors",
                 "fp8_unet": False
             },
             "class_type": "SUPIR_model_loader"
@@ -98,11 +99,9 @@ def process_single_image(img_path, worker_port):
     filename = os.path.basename(img_path)
     output_prefix = f"upscaled_{os.path.splitext(filename)[0]}"
     
-    # 1. Copy image to ComfyUI input folder
     comfy_input_path = os.path.join(COMFYUI_DIR, "input", filename)
     shutil.copy2(img_path, comfy_input_path)
 
-    # 2. Construct workflow JSON
     workflow = build_supir_workflow(filename, output_prefix)
     payload = json.dumps({"prompt": workflow}).encode('utf-8')
     
@@ -121,7 +120,6 @@ def process_single_image(img_path, worker_port):
         print(f"❌ ComfyUI Validation Error on {filename} (HTTP {e.code}):\n{error_body}")
         raise e
 
-    # 3. Poll execution status
     history_url = f"http://127.0.0.1:{worker_port}/history/{prompt_id}"
     while True:
         try:
@@ -139,7 +137,6 @@ def process_single_image(img_path, worker_port):
                 raise ex
         time.sleep(1)
 
-    # 4. Copy produced output image back to S3 destination
     comfy_output_pattern = os.path.join(COMFYUI_DIR, "output", f"{output_prefix}*")
     produced_files = glob.glob(comfy_output_pattern)
     if produced_files:
@@ -152,7 +149,7 @@ def process_single_image(img_path, worker_port):
         os.remove(comfy_input_path)
 
 def main():
-    print("=== Detecting Available Hardware ===" )
+    print("=== Detecting Available Hardware ===")
     try:
         nvidia_smi = subprocess.check_output(["nvidia-smi", "-L"]).decode('utf-8')
         gpu_count = len([line for line in nvidia_smi.strip().split('\n') if line])
@@ -165,7 +162,6 @@ def main():
     procs = []
     base_port = 8188
 
-    # Spawn 1 worker instance per GPU
     for gpu_id in range(gpu_count):
         port = base_port + gpu_id
         print(f"Launching ComfyUI Worker on GPU {gpu_id} (Port {port})...")
@@ -181,7 +177,6 @@ def main():
             sys.exit(1)
         print(f"✓ Active Worker -> Port {port}")
 
-    # Gather images from input path
     raw_images = glob.glob(os.path.join(INPUT_S3_DIR, "*.[jJ][pP][gG]")) + \
                  glob.glob(os.path.join(INPUT_S3_DIR, "*.[pP][nN][gG]")) + \
                  glob.glob(os.path.join(INPUT_S3_DIR, "*.[wW][eE][bB][pP]"))
