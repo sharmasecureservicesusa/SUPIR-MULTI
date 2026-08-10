@@ -11,19 +11,28 @@ SUPIR_PATH="$SUPIR_DIR/SUPIR-v0F.ckpt"
 
 echo "=== Verifying Base Checkpoints ==="
 
-# 1. Download SDXL Base 1.0 (Uses HF_TOKEN if present, falls back to public mirror)
+# 1. Download SDXL Base 1.0 (Attempts official repo if HF_TOKEN is present; falls back to un-gated public mirror)
 if [ ! -f "$SDXL_PATH" ] || [ ! -s "$SDXL_PATH" ]; then
     echo "Downloading SDXL Base 1.0 (6.9 GB)..."
+    
+    SUCCESS=0
+    
     if [ -n "$HF_TOKEN" ]; then
-        curl -fL -H "Authorization: Bearer $HF_TOKEN" --retry 5 --retry-delay 3 \
+        echo "Attempting download from official Stability AI repo..."
+        if curl -fL -H "Authorization: Bearer $HF_TOKEN" --retry 3 --retry-delay 2 \
             "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors" \
-            -o "$SDXL_PATH"
-    else
-        # Un-gated public mirror URL requiring no authentication
+            -o "$SDXL_PATH"; then
+            SUCCESS=1
+        fi
+    fi
+
+    if [ $SUCCESS -eq 0 ]; then
+        echo "Downloading from public un-gated mirror (Pie31415)..."
         curl -fL --retry 5 --retry-delay 3 \
-            "https://huggingface.co/bdsqlsz/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors" \
+            "https://huggingface.co/Pie31415/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors" \
             -o "$SDXL_PATH"
     fi
+
     echo "✓ SDXL Base 1.0 downloaded successfully."
 else
     echo "✓ SDXL Base 1.0 checkpoint present."
