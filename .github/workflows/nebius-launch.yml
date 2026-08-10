@@ -55,20 +55,21 @@ jobs:
           echo "Image: $FULL_IMAGE"
           echo "Platform: gpu-l40s-d | Preset: 2gpu-64vcpu-384gb"
 
-          nebius serverless job create \
+          nebius ai job create \
             --parent-id "$PARENT_ID" \
             --name "$JOB_NAME" \
-            --container-image "$FULL_IMAGE" \
-            --resources-platform "gpu-l40s-d" \
-            --resources-preset "2gpu-64vcpu-384gb" \
-            --preemptible \
-            --environment "MODE=${{ github.event.inputs.mode }}" \
-            --environment "S3_ACCESS_KEY=${{ secrets.S3_ACCESS_KEY }}" \
-            --environment "S3_SECRET_KEY=${{ secrets.S3_SECRET_KEY }}" \
-            --environment "S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}" \
+            --image "$FULL_IMAGE" \
+            --registry-username "${{ github.actor }}" \
+            --registry-password "${{ secrets.GITHUB_TOKEN }}" \
+            --platform "gpu-l40s-d" \
+            --preset "2gpu-64vcpu-384gb" \
+            --env "MODE=${{ github.event.inputs.mode }}" \
+            --env "S3_ACCESS_KEY=${{ secrets.S3_ACCESS_KEY }}" \
+            --env "S3_SECRET_KEY=${{ secrets.S3_SECRET_KEY }}" \
+            --env "S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}" \
             --format json > job_output.json
 
-          JOB_ID=$(jq -r '.metadata.id' job_output.json)
+          JOB_ID=$(jq -r '.metadata.id // .id' job_output.json)
           echo "JOB_ID=$JOB_ID" >> $GITHUB_OUTPUT
           echo "✓ Successfully submitted Serverless Job ID: $JOB_ID"
 
@@ -76,4 +77,4 @@ jobs:
         run: |
           JOB_ID="${{ steps.submit_job.outputs.JOB_ID }}"
           echo "Fetching status for Serverless Job: $JOB_ID"
-          nebius serverless job get --id "$JOB_ID"
+          nebius ai job get --id "$JOB_ID"
