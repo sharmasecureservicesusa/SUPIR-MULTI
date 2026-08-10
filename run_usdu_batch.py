@@ -75,6 +75,7 @@ def build_supir_workflow(input_filename, output_prefix):
         "2": {
             "inputs": {
                 "supir_model": "SUPIR-v0F.ckpt",
+                "sdxl_model": "sd_xl_base_1.0.safetensors",
                 "fp8_unet": True
             },
             "class_type": "SUPIR_model_loader"
@@ -109,13 +110,13 @@ def build_supir_workflow(input_filename, output_prefix):
         },
         "6": {
             "inputs": {
-                "use_tiled": False,
-                "tile_size": 2048,
-                "tile_stride": 1024,
-                "encoder": ["2", 0],
-                "image": ["10", 0]
+                "SUPIR_VAE": ["2", 1],
+                "image": ["10", 0],
+                "use_tiled_vae": True,
+                "encoder_tile_size": 1024,
+                "decoder_tile_size": 1024
             },
-            "class_type": "SUPIR_first_stage_encode"
+            "class_type": "SUPIR_first_stage"
         },
         "7": {
             "inputs": {
@@ -127,8 +128,8 @@ def build_supir_workflow(input_filename, output_prefix):
                 "s_noise": 1.003,
                 "s_cfg": 1.0,
                 "restoration_scale": 1.0,
-                "model": ["2", 0],
-                "latents": ["6", 0],
+                "SUPIR_model": ["2", 0],
+                "latents": ["6", 2],
                 "positive": ["4", 0],
                 "negative": ["5", 0]
             },
@@ -136,11 +137,10 @@ def build_supir_workflow(input_filename, output_prefix):
         },
         "8": {
             "inputs": {
-                "use_tiled": False,
-                "tile_size": 2048,
-                "tile_stride": 1024,
-                "decoder": ["2", 0],
-                "samples": ["7", 0]
+                "SUPIR_VAE": ["2", 1],
+                "latents": ["7", 0],
+                "use_tiled_vae": True,
+                "decoder_tile_size": 1024
             },
             "class_type": "SUPIR_decode"
         },
