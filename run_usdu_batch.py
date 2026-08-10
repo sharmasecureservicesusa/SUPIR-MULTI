@@ -19,7 +19,7 @@ OUTPUT_S3_DIR = "/mnt/s3bucket/output"
 RAM_INPUT_DIR = "/dev/shm/batch_input"
 RAM_OUTPUT_DIR = "/dev/shm/batch_output"
 
-WORKERS_PER_GPU = 2  # 2 workers per L40S = 4 parallel workers total
+WORKERS_PER_GPU = 2  # 2 workers per L40S GPU = 4 parallel workers total
 
 os.makedirs(RAM_INPUT_DIR, exist_ok=True)
 os.makedirs(RAM_OUTPUT_DIR, exist_ok=True)
@@ -33,7 +33,8 @@ def start_comfyui_worker(gpu_id, port):
         PYTHON_BIN, os.path.join(COMFYUI_DIR, "main.py"),
         "--port", str(port),
         "--listen", "127.0.0.1",
-        "--use-sdpa",
+        "--use-pytorch-cross-attention",
+        "--fast",
         "--dont-print-server"
     ]
     env = os.environ.copy()
@@ -124,7 +125,7 @@ def build_supir_workflow(input_filename, output_prefix):
         "7": {
             "inputs": {
                 "seed": 123456789,
-                "steps": 8,  # Reduced from 12 to 8 steps for speed
+                "steps": 8,
                 "cfg_scale": 4.0,
                 "min_cfg_scale": 1.0,
                 "s_churn": 0.0,
@@ -196,7 +197,7 @@ def process_single_image(img_path, worker_port):
         except Exception as ex:
             if "Execution Error" in str(ex):
                 raise ex
-        time.sleep(0.2)  # Faster polling rate
+        time.sleep(0.2)
 
     comfy_output_pattern = os.path.join(COMFYUI_DIR, "output", f"{output_prefix}*")
     produced_files = glob.glob(comfy_output_pattern)
@@ -224,7 +225,6 @@ def main():
     log_files = []
     base_port = 8188
 
-    # Launch WORKERS_PER_GPU instances per GPU
     for gpu_id in range(gpu_count):
         for w in range(WORKERS_PER_GPU):
             port = base_port + (gpu_id * WORKERS_PER_GPU) + w
