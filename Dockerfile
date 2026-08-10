@@ -1,56 +1,50 @@
-FROM ghcr.io/ai-dock/comfyui:latest-cuda
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
 
-LABEL org.opencontainers.image.source="https://github.com/adminsharmasecureservicescausa/nebiusupscale"
-
-WORKDIR /app
-
-ENV PIPX_HOME=/opt/pipx
-ENV PIPX_BIN_DIR=/usr/local/bin
+ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# 1. Install system utilities and aria2 for accelerated multi-connection downloads
 RUN apt-get update && apt-get install -y \
-    s3fs \
-    dos2unix \
-    wget \
     git \
-    aria2 \
+    curl \
+    wget \
+    s3fs \
+    ffmpeg \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    jq \
     python3 \
     python3-pip \
-    pipx \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Install global endpoint dependencies via pipx
-RUN pipx install uvicorn && \
-    pipx inject uvicorn fastapi python-multipart
+RUN python3 -m venv /opt/environments/python/comfyui
+ENV PATH="/opt/environments/python/comfyui/bin:$PATH"
 
-# 3. Clone SUPIR custom node
-RUN git config --global --add safe.directory '*' && \
-    mkdir -p /opt/ComfyUI/custom_nodes && \
-    rm -rf /opt/ComfyUI/custom_nodes/ComfyUI-SUPIR && \
-    git clone --depth 1 https://github.com/kijai/ComfyUI-SUPIR /opt/ComfyUI/custom_nodes/ComfyUI-SUPIR
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# 4. Install SUPIR dependencies directly into ComfyUI's primary Python runtime
-RUN PYTHON_BIN=$(which python3); \
-    if [ -f "/opt/environments/python/comfyui/bin/python3" ]; then PYTHON_BIN="/opt/environments/python/comfyui/bin/python3"; fi; \
-    $PYTHON_BIN -m pip install --no-cache-dir \
-        einops \
-        open_clip_torch \
-        spandex \
-        scipy \
-        -r /opt/ComfyUI/custom_nodes/ComfyUI-SUPIR/requirements.txt
+RUN git clone https://github.com/comfyanonymous/ComfyUI.git /opt/ComfyUI && \
+    pip install --no-cache-dir -r /opt/ComfyUI/requirements.txt
 
-# 5. Pre-create required model directories
-RUN mkdir -p /opt/ComfyUI/models/checkpoints \
-             /opt/ComfyUI/models/SUPIR \
-             /opt/ComfyUI/models/clip \
-             /opt/ComfyUI/models/vae
+RUN git clone https://github.com/f25252525252/ComfyUI-SUPIR.git /opt/ComfyUI/custom_nodes/ComfyUI-SUPIR && \
+    git clone https://github.com/ssitu/ComfyUI_UltimateSDUpscale --recursive /opt/ComfyUI/custom_nodes/ComfyUI_UltimateSDUpscale && \
+    git clone https://github.com/cubiq/ComfyUI_ESSENTIALS.git /opt/ComfyUI/custom_nodes/ComfyUI_ESSENTIALS
 
-# 6. Copy application scripts
-COPY . /app
+RUN pip install --no-cache-dir \
+    huggingface_hub \
+    uvicorn \
+    fastapi \
+    einops \
+    open_clip_torch \
+    spandrel \
+    scipy \
+    pillow
 
-# Normalize line endings and permissions for all scripts and python files
-RUN dos2unix /app/*.sh /app/*.py 2>/dev/null || true && \
-    chmod +x /app/*.sh 2>/dev/null || true
+WORKDIR /app
+COPY download_models.sh entrypoint.sh run_usdu_batch.py /app/
 
+RUN chmod +x /app/download_models.sh /app/entrypoint.sh
+
+EXPOSE 8000
 ENTRYPOINT ["/app/entrypoint.sh"]

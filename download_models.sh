@@ -14,11 +14,11 @@ if [ ! -f "$PYTHON_BIN" ]; then
     PYTHON_BIN="python3"
 fi
 
-echo "=== Verifying Base Checkpoints ==="
+echo "=== Verifying Model Weights & Checkpoints ==="
 
-# 1. Download SDXL Base 1.0 (Tries official stabilityai repo, falls back to public mirror)
+# 1. Download SDXL Base 1.0
 if [ ! -f "$SDXL_PATH" ] || [ ! -s "$SDXL_PATH" ]; then
-    echo "Downloading SDXL Base 1.0..."
+    echo "Downloading SDXL Base 1.0 (6.9 GB)..."
     "$PYTHON_BIN" -c "
 import os
 from huggingface_hub import hf_hub_download
@@ -27,16 +27,23 @@ token = os.environ.get('HF_TOKEN')
 if token and not token.startswith('hf_'):
     token = None
 
-try:
-    print('Attempting download from stabilityai/stable-diffusion-xl-base-1.0...')
-    hf_hub_download(
-        repo_id='stabilityai/stable-diffusion-xl-base-1.0',
-        filename='sd_xl_base_1.0.safetensors',
-        local_dir='$CHECKPOINT_DIR',
-        token=token
-    )
-except Exception as e:
-    print(f'Official repo download failed ({e}), switching to public un-gated mirror...')
+download_success = False
+
+if token:
+    try:
+        print('Attempting download from official stabilityai/stable-diffusion-xl-base-1.0...')
+        hf_hub_download(
+            repo_id='stabilityai/stable-diffusion-xl-base-1.0',
+            filename='sd_xl_base_1.0.safetensors',
+            local_dir='$CHECKPOINT_DIR',
+            token=token
+        )
+        download_success = True
+    except Exception as e:
+        print(f'Official repository download failed ({e}).')
+
+if not download_success:
+    print('Downloading from un-gated public mirror (Pie31415/stable-diffusion-xl-base-1.0)...')
     hf_hub_download(
         repo_id='Pie31415/stable-diffusion-xl-base-1.0',
         filename='sd_xl_base_1.0.safetensors',
@@ -49,9 +56,9 @@ else
     echo "✓ SDXL Base 1.0 checkpoint present."
 fi
 
-# 2. Download SUPIR-v0F Model Weights from public repo (camenduru/SUPIR)
+# 2. Download SUPIR-v0F Weights
 if [ ! -f "$SUPIR_PATH" ] || [ ! -s "$SUPIR_PATH" ]; then
-    echo "Downloading SUPIR-v0F Weights..."
+    echo "Downloading SUPIR-v0F Weights (10.3 GB)..."
     "$PYTHON_BIN" -c "
 import os
 from huggingface_hub import hf_hub_download
