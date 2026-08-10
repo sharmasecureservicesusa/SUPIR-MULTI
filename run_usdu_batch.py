@@ -19,6 +19,8 @@ OUTPUT_S3_DIR = "/mnt/s3bucket/output"
 RAM_INPUT_DIR = "/dev/shm/batch_input"
 RAM_OUTPUT_DIR = "/dev/shm/batch_output"
 
+WORKERS_PER_GPU = 2  # 2 workers per L40S = 4 parallel workers total
+
 os.makedirs(RAM_INPUT_DIR, exist_ok=True)
 os.makedirs(RAM_OUTPUT_DIR, exist_ok=True)
 os.makedirs(OUTPUT_S3_DIR, exist_ok=True)
@@ -31,6 +33,7 @@ def start_comfyui_worker(gpu_id, port):
         PYTHON_BIN, os.path.join(COMFYUI_DIR, "main.py"),
         "--port", str(port),
         "--listen", "127.0.0.1",
+        "--use-sdpa",
         "--dont-print-server"
     ]
     env = os.environ.copy()
@@ -56,7 +59,7 @@ def wait_for_server(proc, log_file_path, port, timeout=120):
                 if response.status == 200:
                     return True
         except Exception:
-            time.sleep(2)
+            time.sleep(1)
 
     print(f"❌ Timeout waiting for ComfyUI worker on port {port}.")
     if os.path.exists(log_file_path):
@@ -113,15 +116,15 @@ def build_supir_workflow(input_filename, output_prefix):
                 "SUPIR_VAE": ["2", 1],
                 "image": ["10", 0],
                 "use_tiled_vae": True,
-                "encoder_tile_size": 1024,
-                "decoder_tile_size": 1024
+                "encoder_tile_size": 2048,
+                "decoder_tile_size": 2048
             },
             "class_type": "SUPIR_first_stage"
         },
         "7": {
             "inputs": {
                 "seed": 123456789,
-                "steps": 12,
+                "steps": 8,  # Reduced from 12 to 8 steps for speed
                 "cfg_scale": 4.0,
                 "min_cfg_scale": 1.0,
                 "s_churn": 0.0,
@@ -140,7 +143,7 @@ def build_supir_workflow(input_filename, output_prefix):
                 "SUPIR_VAE": ["2", 1],
                 "latents": ["7", 0],
                 "use_tiled_vae": True,
-                "decoder_tile_size": 1024
+                "decoder_tile_size": 2048
             },
             "class_type": "SUPIR_decode"
         },
@@ -193,7 +196,7 @@ def process_single_image(img_path, worker_port):
         except Exception as ex:
             if "Execution Error" in str(ex):
                 raise ex
-        time.sleep(1)
+        time.sleep(0.2)  # Faster polling rate
 
     comfy_output_pattern = os.path.join(COMFYUI_DIR, "output", f"{output_prefix}*")
     produced_files = glob.glob(comfy_output_pattern)
@@ -221,13 +224,15 @@ def main():
     log_files = []
     base_port = 8188
 
+    # Launch WORKERS_PER_GPU instances per GPU
     for gpu_id in range(gpu_count):
-        port = base_port + gpu_id
-        print(f"Launching ComfyUI Worker on GPU {gpu_id} (Port {port})...")
-        proc, log_path, log_handle = start_comfyui_worker(gpu_id, port)
-        procs.append(proc)
-        ports.append(port)
-        log_files.append((log_path, log_handle))
+        for w in range(WORKERS_PER_GPU):
+            port = base_port + (gpu_id * WORKERS_PER_GPU) + w
+            print(f"Launching ComfyUI Worker on GPU {gpu_id} (Port {port})...")
+            proc, log_path, log_handle = start_comfyui_worker(gpu_id, port)
+            procs.append(proc)
+            ports.append(port)
+            log_files.append((log_path, log_handle))
 
     for idx, port in enumerate(ports):
         proc = procs[idx]
@@ -237,7 +242,7 @@ def main():
             for p in procs:
                 p.terminate()
             sys.exit(1)
-        print(f"✓ Active Worker -> GPU {idx} | Port {port}")
+        print(f"✓ Active Worker -> Port {port}")
 
     raw_images = glob.glob(os.path.join(INPUT_S3_DIR, "*.[jJ][pP][gG]")) + \
                  glob.glob(os.path.join(INPUT_S3_DIR, "*.[pP][nN][gG]")) + \
@@ -277,7 +282,7 @@ def main():
 
     elapsed = time.time() - start_time
     rate = processed_count / elapsed if elapsed > 0 else 0
-    print(f"=== Completed {processed_count} images in {elapsed:.2f}s ({rate:.2f} img/sec) ===")
+    print(f"=== Completed {processed_count} images in {elapsed:.2f}s ({rate:.2f} img/sec | {rate*60:.2f} img/min) ===")
 
     for p in procs:
         p.terminate()
