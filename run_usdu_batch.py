@@ -44,7 +44,6 @@ def wait_for_server(proc, log_file_path, port, timeout=120):
     url = f"http://127.0.0.1:{port}/system_stats"
     
     while time.time() - start < timeout:
-        # Check if process exited/crashed prematurely
         if proc.poll() is not None:
             print(f"❌ ComfyUI process on port {port} crashed with exit code {proc.returncode}!")
             if os.path.exists(log_file_path):

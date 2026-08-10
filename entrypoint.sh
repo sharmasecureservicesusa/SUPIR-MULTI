@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# PyTorch & CUDA Tuning
+# --- PyTorch & CUDA Tuning ---
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,garbage_collection_threshold:0.8,max_split_size_mb:512"
 export CUDA_MODULE_LOADING="LAZY"
 export CUDNN_BENCHMARK="1"
@@ -9,6 +9,26 @@ export CUDNN_BENCHMARK="1"
 CPU_CORES=$(nproc)
 export OMP_NUM_THREADS=$CPU_CORES
 export MKL_NUM_THREADS=$CPU_CORES
+
+PYTHON_BIN="/opt/environments/python/comfyui/bin/python3"
+if [ ! -f "$PYTHON_BIN" ]; then
+    PYTHON_BIN="python3"
+fi
+
+echo "=== Applying PyTorch / comfy_kitchen Compatibility Patches ==="
+PYTHON_SITE=$("$PYTHON_BIN" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || true)
+NA_FILE="$PYTHON_SITE/comfy_kitchen/backends/eager/na.py"
+
+if [ -f "$NA_FILE" ]; then
+    sed -i 's/kernel_size: list\[int\]/kernel_size: typing.List[int]/g' "$NA_FILE" || true
+    sed -i 's/is_causal: list\[bool\]/is_causal: typing.List[bool]/g' "$NA_FILE" || true
+    sed -i 's/list\[int\]/typing.List[int]/g' "$NA_FILE" || true
+    sed -i 's/list\[bool\]/typing.List[bool]/g' "$NA_FILE" || true
+    if ! grep -q "import typing" "$NA_FILE"; then
+        sed -i '1s/^/import typing\n/' "$NA_FILE" || true
+    fi
+    echo "✓ Successfully patched comfy_kitchen type annotations for PyTorch infer_schema."
+fi
 
 echo "=== Mounting Object Storage & Preparing RAM Disk ==="
 mkdir -p /mnt/s3bucket /tmp/s3cache /dev/shm/batch_input /dev/shm/batch_output
@@ -36,11 +56,6 @@ echo "=== Checking Model Files ==="
 if [ -f "/app/download_models.sh" ]; then
     chmod +x /app/download_models.sh
     /app/download_models.sh
-fi
-
-PYTHON_BIN="/opt/environments/python/comfyui/bin/python3"
-if [ ! -f "$PYTHON_BIN" ]; then
-    PYTHON_BIN="python3"
 fi
 
 if [ "$MODE" = "endpoint" ]; then

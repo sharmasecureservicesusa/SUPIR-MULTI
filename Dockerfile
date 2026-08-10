@@ -17,21 +17,29 @@ RUN apt-get update && apt-get install -y \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
+# Set up Python Virtual Environment
 RUN python3 -m venv /opt/environments/python/comfyui
 ENV PATH="/opt/environments/python/comfyui/bin:$PATH"
 
+# Upgrade pip & install PyTorch 2.x
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir \
     torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
+# Clone ComfyUI core
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git /opt/ComfyUI && \
     pip install --no-cache-dir -r /opt/ComfyUI/requirements.txt
 
+# Clone valid custom node repositories
 RUN git clone https://github.com/kijai/ComfyUI-SUPIR.git /opt/ComfyUI/custom_nodes/ComfyUI-SUPIR && \
     git clone https://github.com/ssitu/ComfyUI_UltimateSDUpscale --recursive /opt/ComfyUI/custom_nodes/ComfyUI_UltimateSDUpscale && \
     git clone https://github.com/cubiq/ComfyUI_essentials.git /opt/ComfyUI/custom_nodes/ComfyUI_essentials
 
-RUN pip install --no-cache-dir \
+# Install custom node dependencies & comfy-kitchen
+RUN pip install --no-cache-dir -r /opt/ComfyUI/custom_nodes/ComfyUI-SUPIR/requirements.txt || true
+
+RUN pip install --no-cache-dir --upgrade \
+    comfy-kitchen \
     huggingface_hub \
     uvicorn \
     fastapi \
