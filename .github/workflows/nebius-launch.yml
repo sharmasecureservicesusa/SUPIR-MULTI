@@ -1,4 +1,4 @@
-name: Launch Nebius Preemptible GPU Instance
+name: Submit Nebius Serverless Batch Job
 
 on:
   workflow_dispatch:
@@ -21,8 +21,8 @@ env:
   IMAGE_NAME: ghcr.io/${{ github.repository }}
 
 jobs:
-  launch-instance:
-    name: Provision Dual-L40S Instance
+  submit-serverless-job:
+    name: Submit Serverless Job (Dual-L40S)
     runs-on: ubuntu-latest
 
     steps:
@@ -44,100 +44,36 @@ jobs:
             --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
             --service-account-file ~/.nebius/credentials.json
 
-      - name: Generate Cloud-Init Config
+      - name: Submit Serverless AI Job
+        id: submit_job
         run: |
-          cat << 'EOF' > cloud-init.yaml
-          #cloud-config
-          package_update: true
-          packages:
-            - docker.io
-            - nvidia-container-toolkit
-
-          runcmd:
-            # 1. Configure Docker GPU Runtime
-            - nvidia-ctk runtime configure --runtime=docker
-            - systemctl restart docker
-            
-            # 2. Authenticate with GitHub Container Registry
-            - echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-            # 3. Prepare Shared Memory RAM Disk (128GB)
-            - mkdir -p /dev/shm
-            - mount -o remount,size=128g /dev/shm
-
-            # 4. Pull image
-            - docker pull ${ENV_IMAGE}:${ENV_TAG}
-
-            # 5. Execute container in foreground mode (cloud-init waits for batch execution)
-            - >-
-              docker run --rm
-              --gpus all
-              --shm-size=128g
-              --net=host
-              -e MODE="${ENV_MODE}"
-              -e S3_ACCESS_KEY="${ENV_S3_ACCESS_KEY}"
-              -e S3_SECRET_KEY="${ENV_S3_SECRET_KEY}"
-              -e S3_BUCKET_NAME="${ENV_S3_BUCKET_NAME}"
-              ${ENV_IMAGE}:${ENV_TAG}
-
-            # 6. Automatically power off VM after batch completion to stop billing
-            - poweroff
-          EOF
-
-          # Inject runtime variables into cloud-init template
-          sed -i "s|\${ENV_IMAGE}|${IMAGE_NAME}|g" cloud-init.yaml
-          sed -i "s|\${ENV_TAG}|${{ github.event.inputs.image_tag }}|g" cloud-init.yaml
-          sed -i "s|\${ENV_MODE}|${{ github.event.inputs.mode }}|g" cloud-init.yaml
-          sed -i "s|\${ENV_S3_ACCESS_KEY}|${{ secrets.S3_ACCESS_KEY }}|g" cloud-init.yaml
-          sed -i "s|\${ENV_S3_SECRET_KEY}|${{ secrets.S3_SECRET_KEY }}|g" cloud-init.yaml
-          sed -i "s|\${ENV_S3_BUCKET_NAME}|${{ secrets.S3_BUCKET_NAME }}|g" cloud-init.yaml
-
-      - name: Deploy Preemptible Instance on Nebius
-        id: deploy
-        run: |
-          VM_NAME="supir-worker-$(date +%s)"
+          JOB_NAME="supir-batch-$(date +%s)"
           PARENT_ID="${{ secrets.NEBIUS_PARENT_ID }}"
-          
-          echo "=== Resolving VPC Subnet ==="
-          SUBNET_ID=$(nebius vpc subnet list --parent-id "$PARENT_ID" --format json 2>/dev/null | jq -r '.items[0].metadata.id // .[0].metadata.id // empty' || true)
-          
-          if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = "null" ]; then
-            echo "No existing subnet found. Creating default network and subnet..."
-            NET_NAME="default-net-$(date +%s)"
-            NET_ID=$(nebius vpc network create --parent-id "$PARENT_ID" --name "$NET_NAME" --format json | jq -r '.metadata.id')
-            
-            SUBNET_NAME="default-subnet-$(date +%s)"
-            SUBNET_ID=$(nebius vpc subnet create --parent-id "$PARENT_ID" --name "$SUBNET_NAME" --network-id "$NET_ID" --ipv4-cidr-blocks '["10.0.0.0/16"]' --format json | jq -r '.metadata.id')
-          fi
+          FULL_IMAGE="${IMAGE_NAME}:${{ github.event.inputs.image_tag }}"
 
-          echo "✓ Using Subnet ID: $SUBNET_ID"
+          echo "Submitting Serverless AI Job '$JOB_NAME'..."
+          echo "Image: $FULL_IMAGE"
+          echo "Platform: gpu-l40s-d | Preset: 2gpu-64vcpu-384gb"
 
-          # Construct network interface payload
-          NET_IFACE_JSON=$(jq -nc --arg subnet "$SUBNET_ID" '[{name: "eth0", subnet_id: $subnet, public_ip_address: {}}]')
-
-          echo "Deploying VM '$VM_NAME' on Platform: gpu-l40s-d | Preset: 2gpu-64vcpu-384gb..."
-          
-          nebius compute instance create \
+          nebius serverless job create \
             --parent-id "$PARENT_ID" \
-            --name "$VM_NAME" \
+            --name "$JOB_NAME" \
+            --container-image "$FULL_IMAGE" \
             --resources-platform "gpu-l40s-d" \
             --resources-preset "2gpu-64vcpu-384gb" \
-            --recovery-policy "fail" \
-            --preemptible-on-preemption "stop" \
-            --boot-disk-attach-mode "read_write" \
-            --boot-disk-managed-disk-name "$VM_NAME-boot-disk" \
-            --boot-disk-managed-disk-size-gibibytes 100 \
-            --boot-disk-managed-disk-type "network_ssd" \
-            --boot-disk-managed-disk-source-image-family-image-family "ubuntu24.04-cuda12" \
-            --network-interfaces "$NET_IFACE_JSON" \
-            --cloud-init-user-data "$(cat cloud-init.yaml)" \
-            --format json > instance_output.json
+            --preemptible \
+            --environment "MODE=${{ github.event.inputs.mode }}" \
+            --environment "S3_ACCESS_KEY=${{ secrets.S3_ACCESS_KEY }}" \
+            --environment "S3_SECRET_KEY=${{ secrets.S3_SECRET_KEY }}" \
+            --environment "S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}" \
+            --format json > job_output.json
 
-          VM_ID=$(jq -r '.metadata.id' instance_output.json)
-          echo "VM_ID=$VM_ID" >> $GITHUB_OUTPUT
-          echo "✓ Successfully created VM ID: $VM_ID"
+          JOB_ID=$(jq -r '.metadata.id' job_output.json)
+          echo "JOB_ID=$JOB_ID" >> $GITHUB_OUTPUT
+          echo "✓ Successfully submitted Serverless Job ID: $JOB_ID"
 
-      - name: Fetch Instance Details
+      - name: Monitor Job Execution
         run: |
-          sleep 15
-          nebius compute instance get --id "${{ steps.deploy.outputs.VM_ID }}"
+          JOB_ID="${{ steps.submit_job.outputs.JOB_ID }}"
+          echo "Fetching status for Serverless Job: $JOB_ID"
+          nebius serverless job get --id "$JOB_ID"
