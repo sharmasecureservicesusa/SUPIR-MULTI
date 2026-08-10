@@ -66,48 +66,88 @@ def wait_for_server(proc, log_file_path, port, timeout=120):
 
 def build_supir_workflow(input_filename, output_prefix):
     return {
-        "3": {
-            "inputs": {
-                "image": input_filename,
-                "upload": "image"
-            },
-            "class_type": "LoadImage"
-        },
-        "4": {
+        "1": {
             "inputs": {
                 "ckpt_name": "sd_xl_base_1.0.safetensors"
             },
             "class_type": "CheckpointLoaderSimple"
         },
-        "5": {
+        "2": {
             "inputs": {
                 "supir_model": "SUPIR-v0F.ckpt",
-                "sdxl_model": "sd_xl_base_1.0.safetensors",
-                "fp8_unet": False
+                "fp8_unet": True
             },
             "class_type": "SUPIR_model_loader"
         },
-        "6": {
+        "3": {
             "inputs": {
-                "use_tiled": True,
-                "tile_size": 1024,
-                "tile_stride": 512,
-                "steps": 20,
-                "cfg": 4.0,
-                "min_cfg": 1.0,
-                "sampler_name": "euler_ancestral",
-                "supir_model": ["5", 0],
-                "model": ["4", 0],
-                "clip": ["4", 1],
-                "vae": ["4", 2],
+                "image": input_filename
+            },
+            "class_type": "LoadImage"
+        },
+        "4": {
+            "inputs": {
+                "text": "high quality, detailed photo, sharp textures, clean skin, natural lighting",
+                "clip": ["1", 1]
+            },
+            "class_type": "CLIPTextEncode"
+        },
+        "5": {
+            "inputs": {
+                "text": "bad quality, blurry, pixelated, noise, artifacts, distorted faces",
+                "clip": ["1", 1]
+            },
+            "class_type": "CLIPTextEncode"
+        },
+        "10": {
+            "inputs": {
+                "upscale_method": "bicubic",
+                "scale_by": 3.0,
                 "image": ["3", 0]
             },
-            "class_type": "SUPIR_sample"
+            "class_type": "ImageScaleBy"
+        },
+        "6": {
+            "inputs": {
+                "use_tiled": False,
+                "tile_size": 2048,
+                "tile_stride": 1024,
+                "encoder": ["2", 0],
+                "image": ["10", 0]
+            },
+            "class_type": "SUPIR_first_stage_encode"
         },
         "7": {
             "inputs": {
+                "seed": 123456789,
+                "steps": 12,
+                "cfg_scale": 4.0,
+                "min_cfg_scale": 1.0,
+                "s_churn": 0.0,
+                "s_noise": 1.003,
+                "s_cfg": 1.0,
+                "restoration_scale": 1.0,
+                "model": ["2", 0],
+                "latents": ["6", 0],
+                "positive": ["4", 0],
+                "negative": ["5", 0]
+            },
+            "class_type": "SUPIR_sample"
+        },
+        "8": {
+            "inputs": {
+                "use_tiled": False,
+                "tile_size": 2048,
+                "tile_stride": 1024,
+                "decoder": ["2", 0],
+                "samples": ["7", 0]
+            },
+            "class_type": "SUPIR_decode"
+        },
+        "9": {
+            "inputs": {
                 "filename_prefix": output_prefix,
-                "images": ["6", 0]
+                "images": ["8", 0]
             },
             "class_type": "SaveImage"
         }
@@ -115,7 +155,7 @@ def build_supir_workflow(input_filename, output_prefix):
 
 def process_single_image(img_path, worker_port):
     filename = os.path.basename(img_path)
-    output_prefix = f"upscaled_{os.path.splitext(filename)[0]}"
+    output_prefix = f"supir_restored_{os.path.splitext(filename)[0]}"
     
     comfy_input_path = os.path.join(COMFYUI_DIR, "input", filename)
     shutil.copy2(img_path, comfy_input_path)
