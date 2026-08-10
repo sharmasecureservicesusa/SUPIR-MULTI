@@ -8,6 +8,7 @@ mkdir -p "$CHECKPOINT_DIR" "$SUPIR_DIR"
 
 SDXL_PATH="$CHECKPOINT_DIR/sd_xl_base_1.0.safetensors"
 SUPIR_PATH="$SUPIR_DIR/SUPIR-v0F.ckpt"
+SUPIR_CKPT_LINK="$CHECKPOINT_DIR/SUPIR-v0F.ckpt"
 
 PYTHON_BIN="/opt/environments/python/comfyui/bin/python3"
 if [ ! -f "$PYTHON_BIN" ]; then
@@ -56,7 +57,7 @@ else
     echo "✓ SDXL Base 1.0 checkpoint present."
 fi
 
-# 2. Download SUPIR-v0F Weights
+# 2. Download SUPIR-v0F Weights & Create Symlink in checkpoints
 if [ ! -f "$SUPIR_PATH" ] || [ ! -s "$SUPIR_PATH" ]; then
     echo "Downloading SUPIR-v0F Weights (10.3 GB)..."
     "$PYTHON_BIN" -c "
@@ -83,4 +84,9 @@ except Exception as e:
     echo "✓ SUPIR-v0F weights verified."
 else
     echo "✓ SUPIR-v0F weights present."
+fi
+
+# Symlink to checkpoints directory so all ComfyUI node variants resolve it
+if [ ! -f "$SUPIR_CKPT_LINK" ]; then
+    ln -sf "$SUPIR_PATH" "$SUPIR_CKPT_LINK"
 fi

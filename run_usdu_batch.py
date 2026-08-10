@@ -19,7 +19,6 @@ OUTPUT_S3_DIR = "/mnt/s3bucket/output"
 RAM_INPUT_DIR = "/dev/shm/batch_input"
 RAM_OUTPUT_DIR = "/dev/shm/batch_output"
 
-# RTX PRO 6000 (96 GB VRAM) allows 4 concurrent FP8 workers per GPU without OOM
 WORKERS_PER_GPU = 4
 
 os.makedirs(RAM_INPUT_DIR, exist_ok=True)
@@ -34,9 +33,9 @@ def start_comfyui_worker(gpu_id, port):
         PYTHON_BIN, os.path.join(COMFYUI_DIR, "main.py"),
         "--port", str(port),
         "--listen", "127.0.0.1",
-        "--highvram",                      # Keeps UNet & VAE resident in 96GB VRAM
-        "--use-pytorch-cross-attention",   # Leverages PyTorch SDPA on Blackwell architecture
-        "--fast",                          # Enables PyTorch 2.x execution graph optimizations
+        "--highvram",
+        "--use-pytorch-cross-attention",
+        "--fast",
         "--dont-print-server"
     ]
     env = os.environ.copy()
@@ -82,7 +81,8 @@ def build_supir_workflow(input_filename, output_prefix):
             "inputs": {
                 "supir_model": "SUPIR-v0F.ckpt",
                 "sdxl_model": "sd_xl_base_1.0.safetensors",
-                "fp8_unet": True
+                "fp8_unet": True,
+                "diffusion_dtype": "fp8_e4m3fn"
             },
             "class_type": "SUPIR_model_loader"
         },
@@ -106,6 +106,14 @@ def build_supir_workflow(input_filename, output_prefix):
             },
             "class_type": "CLIPTextEncode"
         },
+        "11": {
+            "inputs": {
+                "SUPIR_model": ["2", 0],
+                "positive": ["4", 0],
+                "negative": ["5", 0]
+            },
+            "class_type": "SUPIR_Conditioning"
+        },
         "10": {
             "inputs": {
                 "upscale_method": "bicubic",
@@ -118,7 +126,8 @@ def build_supir_workflow(input_filename, output_prefix):
             "inputs": {
                 "SUPIR_VAE": ["2", 1],
                 "image": ["10", 0],
-                "use_tiled_vae": False,        # Non-tiled VAE pass takes advantage of 1.79 TB/s GDDR7 bandwidth
+                "use_tiled_vae": False,
+                "encoder_dtype": "bf16",
                 "encoder_tile_size": 2048,
                 "decoder_tile_size": 2048
             },
@@ -127,17 +136,21 @@ def build_supir_workflow(input_filename, output_prefix):
         "7": {
             "inputs": {
                 "seed": 123456789,
-                "steps": 8,                   # 8 steps maximizes throughput without quality loss
-                "cfg_scale": 4.0,
-                "min_cfg_scale": 1.0,
-                "s_churn": 0.0,
+                "steps": 8,
+                "cfg_scale_start": 4.0,
+                "cfg_scale_end": 4.0,
+                "control_scale_start": 1.0,
+                "control_scale_end": 1.0,
+                "restore_cfg": 1.0,
+                "keep_model_loaded": True,
+                "sampler": "DPMPP2M",
+                "DPMPP_eta": 1.0,
+                "EDM_s_churn": 0.0,
                 "s_noise": 1.003,
-                "s_cfg": 1.0,
-                "restoration_scale": 1.0,
                 "SUPIR_model": ["2", 0],
                 "latents": ["6", 2],
-                "positive": ["4", 0],
-                "negative": ["5", 0]
+                "positive": ["11", 0],
+                "negative": ["11", 1]
             },
             "class_type": "SUPIR_sample"
         },
@@ -145,7 +158,7 @@ def build_supir_workflow(input_filename, output_prefix):
             "inputs": {
                 "SUPIR_VAE": ["2", 1],
                 "latents": ["7", 0],
-                "use_tiled_vae": False,        # Direct VAE decode without tile-stitching overhead
+                "use_tiled_vae": False,
                 "decoder_tile_size": 2048
             },
             "class_type": "SUPIR_decode"

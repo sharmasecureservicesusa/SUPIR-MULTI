@@ -56,7 +56,7 @@ jobs:
           echo "Platform: gpu-rtx6000 | Preset: 1gpu-24vcpu-218gb | Preemptible: true"
 
           nebius ai job create \
-            --parent-id "project-u00qnen5pr00y9qvfas0nf" \
+            --parent-id "$PARENT_ID" \
             --name "$JOB_NAME" \
             --image "$FULL_IMAGE" \
             --registry-username "${{ github.actor }}" \
