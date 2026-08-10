@@ -35,15 +35,15 @@ jobs:
           echo "$HOME/.nebius/bin" >> $GITHUB_PATH
           sudo ln -sf "$HOME/.nebius/bin/nebius" /usr/local/bin/nebius || true
 
-      - name: Authenticate Nebius Service Account
+      - name: Authenticate with Nebius Cloud
         run: |
           mkdir -p ~/.nebius
-          echo '${{ secrets.NEBIUS_SA_CREDENTIALS }}' > ~/.nebius/sa-credentials.json
-          nebius profile create \
+          echo '${{ secrets.NEBIUS_SA_CREDENTIALS }}' > ~/.nebius/credentials.json
+          nebius profile create default \
             --endpoint api.nebius.cloud \
-            --service-account-file ~/.nebius/sa-credentials.json \
-            --profile sa-profile
-            
+            --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
+            --service-account-file ~/.nebius/credentials.json
+
       - name: Generate Cloud-Init Config
         run: |
           cat << 'EOF' > cloud-init.yaml
@@ -68,7 +68,7 @@ jobs:
             # 4. Pull image
             - docker pull ${ENV_IMAGE}:${ENV_TAG}
 
-            # 5. Execute container in foreground mode (removed -d flag so cloud-init waits)
+            # 5. Execute container in foreground mode (cloud-init waits for batch execution)
             - >-
               docker run --rm
               --gpus all
@@ -80,7 +80,7 @@ jobs:
               -e S3_BUCKET_NAME="${ENV_S3_BUCKET_NAME}"
               ${ENV_IMAGE}:${ENV_TAG}
 
-            # 6. Shut down and turn off the VM as soon as the container finishes
+            # 6. Automatically power off VM after batch completion to stop billing
             - poweroff
           EOF
 
@@ -96,26 +96,46 @@ jobs:
         id: deploy
         run: |
           VM_NAME="supir-worker-$(date +%s)"
+          PARENT_ID="${{ secrets.NEBIUS_PARENT_ID }}"
           
+          echo "=== Resolving VPC Subnet ==="
+          SUBNET_ID=$(nebius vpc subnet list --parent-id "$PARENT_ID" --format json 2>/dev/null | jq -r '.items[0].metadata.id // .[0].metadata.id // empty' || true)
+          
+          if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = "null" ]; then
+            echo "No existing subnet found. Creating default network and subnet..."
+            NET_NAME="default-net-$(date +%s)"
+            NET_ID=$(nebius vpc network create --parent-id "$PARENT_ID" --name "$NET_NAME" --format json | jq -r '.metadata.id')
+            
+            SUBNET_NAME="default-subnet-$(date +%s)"
+            SUBNET_ID=$(nebius vpc subnet create --parent-id "$PARENT_ID" --name "$SUBNET_NAME" --network-id "$NET_ID" --ipv4-cidr-blocks '["10.0.0.0/16"]' --format json | jq -r '.metadata.id')
+          fi
+
+          echo "✓ Using Subnet ID: $SUBNET_ID"
+
+          # Construct network interface payload
+          NET_IFACE_JSON=$(jq -nc --arg subnet "$SUBNET_ID" '[{name: "eth0", subnet_id: $subnet, public_ip_address: {}}]')
+
           echo "Deploying VM '$VM_NAME' on Platform: gpu-l40s-d | Preset: 2gpu-64vcpu-384gb..."
           
           nebius compute instance create \
-            --parent-id "${{ secrets.NEBIUS_PARENT_ID }}" \
+            --parent-id "$PARENT_ID" \
             --name "$VM_NAME" \
             --resources-platform "gpu-l40s-d" \
             --resources-preset "2gpu-64vcpu-384gb" \
             --recovery-policy "fail" \
             --preemptible-on-preemption "stop" \
             --boot-disk-attach-mode "read_write" \
+            --boot-disk-managed-disk-name "$VM_NAME-boot-disk" \
             --boot-disk-managed-disk-size-gibibytes 100 \
             --boot-disk-managed-disk-type "network_ssd" \
             --boot-disk-managed-disk-source-image-family-image-family "ubuntu24.04-cuda12" \
+            --network-interfaces "$NET_IFACE_JSON" \
             --cloud-init-user-data "$(cat cloud-init.yaml)" \
             --format json > instance_output.json
 
           VM_ID=$(jq -r '.metadata.id' instance_output.json)
           echo "VM_ID=$VM_ID" >> $GITHUB_OUTPUT
-          echo "Successfully initialized VM ID: $VM_ID"
+          echo "✓ Successfully created VM ID: $VM_ID"
 
       - name: Fetch Instance Details
         run: |
