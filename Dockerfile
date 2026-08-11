@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -22,10 +22,10 @@ RUN apt-get update && apt-get install -y \
 RUN python3 -m venv /opt/environments/python/comfyui
 ENV PATH="/opt/environments/python/comfyui/bin:$PATH"
 
-# Upgrade pip & install PyTorch 2.x CUDA 12.1
+# Upgrade pip & install PyTorch 2.x compiled for CUDA 12.4
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir \
-    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 # Clone ComfyUI core
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git /opt/ComfyUI && \
@@ -36,7 +36,7 @@ RUN git clone https://github.com/kijai/ComfyUI-SUPIR.git /opt/ComfyUI/custom_nod
     git clone https://github.com/ssitu/ComfyUI_UltimateSDUpscale --recursive /opt/ComfyUI/custom_nodes/ComfyUI_UltimateSDUpscale && \
     git clone https://github.com/cubiq/ComfyUI_essentials.git /opt/ComfyUI/custom_nodes/ComfyUI_essentials
 
-# Install dependencies for custom nodes & comfy-kitchen
+# Install dependencies for custom nodes
 RUN pip install --no-cache-dir -r /opt/ComfyUI/custom_nodes/ComfyUI-SUPIR/requirements.txt || true
 
 RUN pip install --no-cache-dir --upgrade \
