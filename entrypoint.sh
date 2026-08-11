@@ -66,3 +66,4 @@ else
     echo "=== Starting High-Throughput SUPIR Batch Job ==="
     exec "$PYTHON_BIN" /app/run_usdu_batch.py
 fi
+    
