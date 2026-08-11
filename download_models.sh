@@ -72,3 +72,4 @@ fi
 
 # Create symlink for nodes resolving SUPIR inside checkpoints folder
 ln -sf "$SUPIR_DEST" "$SUPIR_LINK"
+        
