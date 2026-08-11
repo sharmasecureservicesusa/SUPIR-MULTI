@@ -44,7 +44,7 @@ def start_comfyui_worker(gpu_id, port):
     proc = subprocess.Popen(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT)
     return proc, log_file_path, log_file
 
-def wait_for_server(proc, log_file_path, port, timeout=120):
+def wait_for_server(proc, log_file_path, port, timeout=300):
     start = time.time()
     url = f"http://127.0.0.1:{port}/system_stats"
     
@@ -61,7 +61,7 @@ def wait_for_server(proc, log_file_path, port, timeout=120):
                 if response.status == 200:
                     return True
         except Exception:
-            time.sleep(1)
+            time.sleep(2)
 
     print(f"❌ Timeout waiting for ComfyUI worker on port {port}.")
     if os.path.exists(log_file_path):
@@ -227,6 +227,7 @@ def main():
     log_files = []
     base_port = 8188
 
+    # Stagger launch sequence to prevent database & custom node registration locks
     for gpu_id in range(gpu_count):
         for w in range(WORKERS_PER_GPU):
             port = base_port + (gpu_id * WORKERS_PER_GPU) + w
@@ -235,11 +236,12 @@ def main():
             procs.append(proc)
             ports.append(port)
             log_files.append((log_path, log_handle))
+            time.sleep(3)  # 3-second delay between worker spawns
 
     for idx, port in enumerate(ports):
         proc = procs[idx]
         log_path = log_files[idx][0]
-        if not wait_for_server(proc, log_path, port):
+        if not wait_for_server(proc, log_path, port, timeout=300):
             print(f"❌ Aborting batch execution due to worker startup failure on port {port}.")
             for p in procs:
                 p.terminate()

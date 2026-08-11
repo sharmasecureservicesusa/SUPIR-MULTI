@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
+FROM nvidia/cuda:13.0.0-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -22,10 +22,10 @@ RUN apt-get update && apt-get install -y \
 RUN python3 -m venv /opt/environments/python/comfyui
 ENV PATH="/opt/environments/python/comfyui/bin:$PATH"
 
-# Upgrade pip & install PyTorch with CUDA 12.8 (adds sm_120 Blackwell support)
+# Install PyTorch built with CUDA 13.0 (Required for sm_120 Blackwell support)
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir \
-    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 
 # Clone ComfyUI core
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git /opt/ComfyUI && \
