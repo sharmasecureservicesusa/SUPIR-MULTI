@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# --- PyTorch & CUDA Tuning for RTX PRO 6000 ---
+# Memory allocation and CUDA runtime options
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,garbage_collection_threshold:0.8,max_split_size_mb:512"
 export CUDA_MODULE_LOADING="LAZY"
 export CUDNN_BENCHMARK="1"
