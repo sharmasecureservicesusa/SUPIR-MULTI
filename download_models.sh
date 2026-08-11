@@ -12,7 +12,7 @@ SUPIR_DEST="$SUPIR_DIR/SUPIR-v0F.ckpt"
 SUPIR_LINK="$CHECKPOINT_DIR/SUPIR-v0F.ckpt"
 
 MIN_SDXL_SIZE=6000000000    # ~6.0 GB
-MIN_SUPIR_SIZE=10000000000   # ~10.0 GB
+MIN_SUPIR_SIZE=5000000000   # ~5.0 GB (Actual full size: 5.33 GB / 5,329,719,950 bytes)
 
 echo "=== Syncing Model Checkpoints from S3 Mount ==="
 
@@ -59,7 +59,7 @@ if [ ! -f "$SUPIR_DEST" ] || [ $(stat -c%s "$SUPIR_DEST" 2>/dev/null || echo 0) 
             cp "$SUPIR_SRC" "$SUPIR_DEST"
             echo "✓ SUPIR-v0F synced successfully."
         else
-            echo "❌ Found $SUPIR_SRC but file size ($SRC_SIZE bytes) is incomplete. Requires ~10.3 GB."
+            echo "❌ Found $SUPIR_SRC but file size ($SRC_SIZE bytes) is incomplete. Requires ~5.3 GB."
             exit 1
         fi
     else
