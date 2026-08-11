@@ -17,7 +17,7 @@ MIN_SUPIR_SIZE=10000000000   # ~10.0 GB
 echo "=== Syncing Model Checkpoints from S3 Mount ==="
 
 # 1. Sync SDXL Base 1.0
-if [ ! -f "$SDXL_DEST" ] || [ $(stat -c%s "$SDXL_DEST" 2>/dev/null || echo 0) -lt $MIN_SDXL_SIZE ]; then
+if [ ! -f "$SDXL_DEST" ] || [ "$(stat -c%s "$SDXL_DEST" 2>/dev/null || echo 0)" -lt $MIN_SDXL_SIZE ]; then
     SDXL_SRC=""
     if [ -f "$S3_MOUNT/models/checkpoints/sd_xl_base_1.0.safetensors" ]; then
         SDXL_SRC="$S3_MOUNT/models/checkpoints/sd_xl_base_1.0.safetensors"
@@ -44,7 +44,7 @@ else
 fi
 
 # 2. Sync SUPIR-v0F
-if [ ! -f "$SUPIR_DEST" ] || [ $(stat -c%s "$SUPIR_DEST" 2>/dev/null || echo 0) -lt $MIN_SUPIR_SIZE ]; then
+if [ ! -f "$SUPIR_DEST" ] || [ "$(stat -c%s "$SUPIR_DEST" 2>/dev/null || echo 0)" -lt $MIN_SUPIR_SIZE ]; then
     SUPIR_SRC=""
     if [ -f "$S3_MOUNT/models/SUPIR-v0F.ckpt" ]; then
         SUPIR_SRC="$S3_MOUNT/models/SUPIR-v0F.ckpt"
