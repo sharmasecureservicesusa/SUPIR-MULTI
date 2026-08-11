@@ -27,12 +27,18 @@ os.makedirs(OUTPUT_S3_DIR, exist_ok=True)
 
 def start_comfyui_worker(gpu_id, port):
     log_file_path = f"/tmp/comfyui_gpu_{gpu_id}_port_{port}.log"
+    db_file_path = f"/tmp/comfyui_db_gpu_{gpu_id}_port_{port}.db"
+    user_dir_path = f"/tmp/user_gpu_{gpu_id}_port_{port}"
+    
+    os.makedirs(user_dir_path, exist_ok=True)
     log_file = open(log_file_path, "w")
     
     cmd = [
         PYTHON_BIN, os.path.join(COMFYUI_DIR, "main.py"),
         "--port", str(port),
         "--listen", "127.0.0.1",
+        "--database-url", f"sqlite:///{db_file_path}",
+        "--user-directory", user_dir_path,
         "--highvram",
         "--use-pytorch-cross-attention",
         "--fast",
@@ -227,7 +233,6 @@ def main():
     log_files = []
     base_port = 8188
 
-    # Stagger launch sequence to prevent database & custom node registration locks
     for gpu_id in range(gpu_count):
         for w in range(WORKERS_PER_GPU):
             port = base_port + (gpu_id * WORKERS_PER_GPU) + w
@@ -236,7 +241,7 @@ def main():
             procs.append(proc)
             ports.append(port)
             log_files.append((log_path, log_handle))
-            time.sleep(3)  # 3-second delay between worker spawns
+            time.sleep(2)
 
     for idx, port in enumerate(ports):
         proc = procs[idx]
