@@ -61,3 +61,4 @@ RUN chmod +x /app/download_models.sh /app/entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["/app/entrypoint.sh"]
+	
